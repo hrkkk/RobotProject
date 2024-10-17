@@ -1,0 +1,11 @@
+<RCC>
+    <qresource prefix="/">
+        <file>resources/info.png</file>
+        <file>resources/io.png</file>
+        <file>resources/robot.png</file>
+        <file>resources/state.png</file>
+        <file>resources/track.png</file>
+        <file>resources/add.png</file>
+        <file>resources/pallet.png</file>
+    </qresource>
+</RCC>
