@@ -8,6 +8,8 @@ MyModbus::MyModbus(QObject *parent) : QObject(parent)
         emit signal_errorOccurred();
         qDebug() << "error occurred";
     });
+    m_modbusClient->setNumberOfRetries(3);
+    m_modbusClient->setTimeout(5000);
 }
 
 MyModbus::~MyModbus()
@@ -55,11 +57,12 @@ bool MyModbus::getConnectionState()
 //typeNum:1_线圈 2_离散输入 3_保持 4_输入
 bool MyModbus::readModbusData(int typeNum, int startAdd, quint16 numbers)
 {
+    // 检查Modbus TCP连接是否正常
     if(m_modbusClient->state() != QModbusDevice::ConnectedState) {
         return false;
     }
 
-    //确定寄存器类型
+    // 确定寄存器类型
     QModbusDataUnit ReadUnit;
     if(typeNum == 1) {
         ReadUnit = QModbusDataUnit(QModbusDataUnit::Coils, startAdd, numbers);    // 读取线圈状态
@@ -70,27 +73,26 @@ bool MyModbus::readModbusData(int typeNum, int startAdd, quint16 numbers)
     } else if(typeNum == 4) {
         ReadUnit = QModbusDataUnit(QModbusDataUnit::InputRegisters, startAdd, numbers);       // 读取输入寄存器
     } else {
-        // LOGDEBUG << "读取寄存器类型错误";
         return false;
     }
-    // LOGDEBUG << "readModbusData typeNum:" << typeNum;
 
-    //多读
-    if(auto *reply = m_modbusClient->sendReadRequest(ReadUnit, 1)) {
+    // 发送读取请求数据包
+    QModbusReply* reply = m_modbusClient->sendReadRequest(ReadUnit, 1);
+    if(reply) {     // 如果发送成功
         if(!reply->isFinished()) {
-            if((typeNum == 1) || (typeNum == 2)) {
-                QObject::connect(reply, &QModbusReply::finished, this, &MyModbus::slot_readReadyCoils);   //读取线圈
+            if((typeNum == 1) || (typeNum == 2)) {  // 读取线圈
+                QObject::connect(reply, &QModbusReply::finished, this, &MyModbus::slot_readReadyCoils);
             }
-            if((typeNum == 3) || (typeNum == 4)) {
-                QObject::connect(reply, &QModbusReply::finished, this, &MyModbus::slot_readReadyRegisters);   //读取寄存器
+            if((typeNum == 3) || (typeNum == 4)) {  // 读取寄存器
+                QObject::connect(reply, &QModbusReply::finished, this, &MyModbus::slot_readReadyRegisters);
             }
-            //reply->deleteLater();
             return true;
         } else {
             reply->deleteLater();
+            LOGDEBUG << "read request reply is not finished";
             return false;
         }
-    } else {
+    } else {    // 如果发送失败
         LOGDEBUG << "Read Error:" + m_modbusClient->errorString();
         emit signal_errorOccurred();
         return false;
@@ -152,24 +154,29 @@ bool MyModbus::writeModbusData(int typeNum, int startAdd, int value)
     return true;
 }
 
-// 写入单个保持寄存器
+/*
+ * 写入单个保持寄存器
+ */
 bool MyModbus::writeSingleHoldingRegister(quint16 startAddress, quint16 value)
 {
+    // 检查Modbus TCP连接是否正常
     if(m_modbusClient->state() != QModbusDevice::ConnectedState) {
         return false;
     }
 
+    // 发送写入请求数据包
     QModbusDataUnit request(QModbusDataUnit::HoldingRegisters, startAddress, 1);
     request.setValue(0, value);
     QModbusReply* reply = m_modbusClient->sendWriteRequest(request, 1);
 
+    // 如果数据发送失败
     if (!reply) {
         qDebug() << "Failed to send write request.";
         return false;
     }
 
     QObject::connect(reply, &QModbusReply::finished, this, [reply, this]() {
-        if (reply->error() != QModbusDevice::NoError) {
+        if (reply->error() != QModbusDevice::NoError) {     // 如果发送了错误
             qDebug() << "Error writing data to Modbus: " << reply->errorString();
             emit signal_errorOccurred();
         }
@@ -241,8 +248,10 @@ void MyModbus::slot_stateChanged()
 {
     // LOGDEBUG<<m_modbusClient->state();
     if(m_modbusClient->state() == QModbusDevice::ConnectedState){
+        qDebug() << "modbus connection connected";
         emit signal_stateChanged(true);
     } else if(m_modbusClient->state() == QModbusDevice::UnconnectedState) {
+        qDebug() << "modbus connection unconnected";
         emit signal_stateChanged(false);
     }
 }
@@ -271,10 +280,11 @@ void MyModbus::slot_readReadyRegisters()
 {
     QModbusReply *reply = qobject_cast<QModbusReply *>(sender());
     // qDebug() << reply->rawResult();      // 数据组成：  指令（1字节）   长度（1字节）   实际载荷
+
     if (!reply) {
-        // LOGDEBUG<<"读取保持/输入寄存器错误";
         return;
     }
+
     if (reply->error() == QModbusDevice::NoError) {
         const QModbusDataUnit unit = reply->result();
         QVector<quint16> valueList = unit.values();
@@ -282,7 +292,7 @@ void MyModbus::slot_readReadyRegisters()
         emit signal_receivedData(valueList);
         // qDebug() << valueList;      // 数据组成：  实际载荷（长度为寄存器个数）
     } else {
-        LOGDEBUG << "Reply error:" << reply->error();
+        qDebug() << "Error reading data from Modbus: " << reply->errorString();
         emit signal_errorOccurred();
     }
     reply->deleteLater();

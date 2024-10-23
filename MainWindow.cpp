@@ -1,6 +1,8 @@
 ﻿#include "MainWindow.h"
 #include "./ui_MainWindow.h"
 
+#include <QDateTime>
+
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -8,8 +10,9 @@ MainWindow::MainWindow(QWidget *parent)
     m_robotController(std::make_unique<RobotController>()),
     m_trackController(std::make_unique<TrackController>()),
     m_ioController(std::make_unique<IOController>()),
-    m_timer(new QTimer()),
+    m_comTimer(new QTimer()),
     m_clockTimer(new QTimer()),
+    m_detectTimer(new QTimer()),
     m_stopProcess(true)
 {
     ui->setupUi(this);
@@ -18,7 +21,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     this->showMaximized();
     ui->tabWidget->tabBar()->hide();
-    switchPage(1);
+    switchPage(0);
 
     connect(ui->btn_page1, &QPushButton::clicked, this, [=]() {
         switchPage(0);
@@ -36,8 +39,13 @@ MainWindow::MainWindow(QWidget *parent)
         switchPage(4);
     });
 
+    ui->btn_page3->hide();
+    ui->btn_page4->hide();
+    ui->tab->hide();
+    ui->tab_3->hide();
+
     // 定时读取数据
-    connect(m_timer, &QTimer::timeout, this, [=]() {
+    connect(m_comTimer, &QTimer::timeout, this, [=]() {
         // 每秒读取一次地轨PLC数据
         if (m_trackController && m_trackController->isConnected()) {
             static int last = 1;
@@ -56,21 +64,6 @@ MainWindow::MainWindow(QWidget *parent)
         }
     });
 
-    initTrackUI();
-    initRobotUI();
-    initModuleUI();
-
-    // 记录开机时间
-    connect(m_clockTimer, &QTimer::timeout, this, [=]() {
-        // 获取当前时间
-        ui->label_currTime->setText("2024 - 07 - 13  15:14");
-    });
-
-    if (m_clockTimer) {
-        m_clockTimer->setInterval(1000);
-        m_clockTimer->start();
-    }
-
     connect(ui->btn_load, &QPushButton::clicked, this, [=]() {
         int shelvesId = ui->cBox_shelvesId->currentIndex() + 1;      // 1 - 12
         int boxId = ui->cBox_boxId->currentIndex() + 1;              // 1 - 3
@@ -86,101 +79,133 @@ MainWindow::MainWindow(QWidget *parent)
         unloading(shelvesId, boxId, fixtureId);
     });
 
-    this->setAcceptDrops(true);
+    // 弹出选择工步文件对话框
+    connect(ui->btn_chooseFile, &QPushButton::clicked, this, [=]() {
+        QString filename = QFileDialog::getOpenFileName(
+                               nullptr,
+                               tr("Open File"),
+                               "\\\\192.168.1.250/Template/",    // 局域网内的共享文件夹
+                               tr("All Files (*)")        // 文件过滤器
+                               ).split('/').back();       // 获取文件名（不带路径）
 
-    QList<Container*> containers;
-    for (int i = 1; i <= 12; ++i) {
-        containers.append(this->findChild<Container*>("container_shelves" + QString::number(i)));
+        if (!filename.isEmpty()) {
+            ui->lineEdit_stepFilename->setText(filename);
+        }
+    });
+
+    connect(ui->btn_execute, &QPushButton::clicked, this, [=]() {
+        int shelvesID = ui->cBox_shelvesID->currentIndex() + 1;
+        int fixtureID = ui->cBox_fixtureID->currentIndex() + 1;
+        int boxID = 0;
+        if (fixtureID == 1 || fixtureID == 2) {
+            boxID = 1;
+        } else if (fixtureID == 3 || fixtureID == 4) {
+            boxID = 2;
+        } else if (fixtureID == 5 || fixtureID == 6) {
+            boxID = 3;
+        }
+
+        std::string deviceID = ui->cBox_deviceID->currentText().toStdString();
+        std::string cellID = ui->cBox_unitID->currentText().toStdString();
+        std::string channelID = ui->cBox_channelID->currentText().toStdString();
+        std::string filename = ui->lineEdit_stepFilename->text().toStdString();
+
+        QDateTime specificTime = ui->dateTimeEdit->dateTime();
+        QDateTime currentTime = QDateTime::currentDateTime();
+
+        if (ui->checkBox_nowExecute->isChecked()) {     // 如果是立即执行模式
+            loading(shelvesID, boxID, fixtureID, deviceID, cellID, channelID, filename);
+        } else {    // 如果是定时执行模式
+            // 获取定时时间与当前时间的间隔
+            long delayMs = specificTime.secsTo(currentTime) * 1000;
+            if (delayMs < 0) {      // 如果计算出的延迟时间是负数，说明指定时间已经过去，则设置为0
+                delayMs = 0;
+            }
+            // 开启一个定时器，延迟指定时间后执行上料函数
+            QTimer* timer = new QTimer();
+
+            connect(timer, &QTimer::timeout, this, [=]() {
+                loading(shelvesID, boxID, fixtureID, deviceID, cellID, channelID, filename);
+                // 释放掉QTimer对象
+                timer->deleteLater();
+            });
+
+            timer->setSingleShot(true);
+            timer->start(delayMs);
+        }
+
+        // 在任务列表中添加一行数据
+        // 设置该行数据内容
+        QTableWidgetItem* item1 = new QTableWidgetItem(QString::number(shelvesID));
+        QTableWidgetItem* item2 = new QTableWidgetItem(QString::number(fixtureID));
+        QTableWidgetItem* item3 = new QTableWidgetItem(QString::fromStdString(deviceID));
+        QTableWidgetItem* item4 = new QTableWidgetItem(QString::fromStdString(cellID));
+        QTableWidgetItem* item5 = new QTableWidgetItem(QString::fromStdString(channelID));
+        QTableWidgetItem* item6 = new QTableWidgetItem(QString::fromStdString(filename));
+        QTableWidgetItem* item7 = new QTableWidgetItem();
+        if (ui->checkBox_nowExecute->isChecked()) {
+            item7->setText(currentTime.toString("yyyy-MM-dd HH:mm:ss"));
+        } else {
+            item7->setText(specificTime.toString("yyyy-MM-dd HH:mm:ss"));
+        }
+        QTableWidgetItem* item8 = new QTableWidgetItem(QStringLiteral("等待中"));
+        item8->setTextColor("#A3A3A3");
+
+        ui->tableWidget_taskList->insertRow(ui->tableWidget_taskList->rowCount());
+        ui->tableWidget_taskList->setItem(ui->tableWidget_taskList->rowCount() - 1, 0, item1);
+        ui->tableWidget_taskList->setItem(ui->tableWidget_taskList->rowCount() - 1, 1, item2);
+        ui->tableWidget_taskList->setItem(ui->tableWidget_taskList->rowCount() - 1, 2, item3);
+        ui->tableWidget_taskList->setItem(ui->tableWidget_taskList->rowCount() - 1, 3, item4);
+        ui->tableWidget_taskList->setItem(ui->tableWidget_taskList->rowCount() - 1, 4, item5);
+        ui->tableWidget_taskList->setItem(ui->tableWidget_taskList->rowCount() - 1, 5, item6);
+        ui->tableWidget_taskList->setItem(ui->tableWidget_taskList->rowCount() - 1, 6, item7);
+        ui->tableWidget_taskList->setItem(ui->tableWidget_taskList->rowCount() - 1, 7, item8);
+    });
+
+    // 用于实时更新时间
+    connect(m_clockTimer, &QTimer::timeout, this, [=]() {
+        QDateTime currentDateTime = QDateTime::currentDateTime();
+        ui->label_currTime->setText(currentDateTime.toString("yyyy-MM-dd HH:mm:ss"));
+    });
+
+    connect(m_detectTimer, &QTimer::timeout, this, [=]() {
+        int status = getDetectionStatus();
+        if (status == -1) {
+
+        } else if (status == 1) {
+
+        }
+    });
+
+    initTrackUI();
+    initRobotUI();
+    initModuleUI();
+
+    // 启动时间更新时钟
+    if (m_clockTimer) {
+        m_clockTimer->setInterval(1000);
+        m_clockTimer->start();
     }
-    for (int i = 1; i <= 6; ++i) {
-        containers.append(this->findChild<Container*>("container_fixture" + QString::number(i)));
-    }
-    for (auto entry : containers) {
-        connect(entry, &Container::sig_dragStart, this, [=](const QString& sourceWidget) {
-            m_dragSourceWidget = sourceWidget;
-        });
-        connect(entry, &Container::sig_dragFinish, this, [=](const QString& targetWidget) {
-            m_dragTargetWidget = targetWidget;
-            if (m_dragTargetWidget == "") {
-                m_dragSourceWidget = "";
-            } else {
-                if (m_dragSourceWidget.contains("shelves") && m_dragTargetWidget.contains("fixture")) {
-                    // 从货架搬运到温控箱
-                    QRegExp regex("\\d+$");
-                    regex.indexIn(m_dragSourceWidget);
-                    int shelvesId = regex.cap(0).toInt();
-                    regex.indexIn(m_dragTargetWidget);
-                    int fixtureId = regex.cap(0).toInt();
 
-                    QMessageBox msgBox;
-                    msgBox.setText(QStringLiteral("是否要将托盘从%1号货架移至%2号治具?").arg(shelvesId).arg(fixtureId));
-                    msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
-                    int ret = msgBox.exec();
-                    if (ret == QMessageBox::Yes) {
-                        Container* srcContainer = findChild<Container*>(m_dragSourceWidget);
-                        Container* dstContainer = findChild<Container*>(m_dragTargetWidget);
-                        QLabel* pallet = m_pallets[m_dragSourceWidget];
-                        m_pallets.remove(m_dragSourceWidget);
-                        m_pallets.insert(m_dragTargetWidget, pallet);
-                        srcContainer->removeWidget(pallet);
-                        dstContainer->addWidget(pallet);
-
-                        ui->label_src->setText(QStringLiteral("货架#%1").arg(shelvesId));
-                        ui->label_dst->setText(QStringLiteral("治具#%1").arg(fixtureId));
-
-                        loading(shelvesId, 1, fixtureId);
-                    }
-                } else if (m_dragSourceWidget.contains("fixture") && m_dragTargetWidget.contains("shelves")) {
-                    // 从温控箱搬运到货架
-                    QRegExp regex("\\d+$");
-                    regex.indexIn(m_dragSourceWidget);
-                    int fixtureId = regex.cap(0).toInt();
-                    regex.indexIn(m_dragTargetWidget);
-                    int shelvesId = regex.cap(0).toInt();
-
-                    QMessageBox msgBox;
-                    msgBox.setText(QStringLiteral("是否要将托盘从%1号治具移至%2号货架?").arg(fixtureId).arg(shelvesId));
-                    msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
-                    int ret = msgBox.exec();
-                    if (ret == QMessageBox::Yes) {
-                        Container* srcContainer = findChild<Container*>(m_dragSourceWidget);
-                        Container* dstContainer = findChild<Container*>(m_dragTargetWidget);
-                        QLabel* pallet = m_pallets[m_dragSourceWidget];
-                        m_pallets.remove(m_dragSourceWidget);
-                        m_pallets.insert(m_dragTargetWidget, pallet);
-                        srcContainer->removeWidget(pallet);
-                        dstContainer->addWidget(pallet);
-
-                        ui->label_dst->setText(QStringLiteral("货架#%1").arg(shelvesId));
-                        ui->label_src->setText(QStringLiteral("治具#%1").arg(fixtureId));
-
-                        unloading(shelvesId, 1, fixtureId);
-                    }
-                }
-            }
-        });
-        connect(entry, &Container::sig_addPallet, this, [=](Container* container) {
-            if (!m_pallets.contains(container->objectName()) && !container->objectName().contains("fixture")) {
-                QLabel* pallet = new QLabel(this);
-                m_pallets.insert(container->objectName(), pallet);
-                container->addWidget(pallet);
-                ui->label_palletsNum->setText(QString::number(m_pallets.size()));
-            }
-        });
-        connect(entry, &Container::sig_removePallet, this, [=](Container* container) {
-            if (m_pallets.contains(container->objectName()) && !container->objectName().contains("fixture")) {
-                QLabel* pallet = m_pallets[container->objectName()];
-                container->removeWidget(pallet);
-                m_pallets.remove(container->objectName());
-                delete pallet;
-                ui->label_palletsNum->setText(QString::number(m_pallets.size()));
-            }
-        });
+    // 启动检测完成轮询时钟
+    if (m_detectTimer) {
+        m_detectTimer->setInterval(1000 * 60 * 0.5);      // 每5分钟检查一次
+        m_detectTimer->start();
     }
 }
 
 MainWindow::~MainWindow()
 {
+    if (m_robotController && m_robotController->isConnected()) {
+        m_robotController->disconnectWithPLC();
+    }
+    if (m_trackController && m_trackController->isConnected()) {
+        m_trackController->disconnectWithPLC();
+    }
+    if (m_ioController && m_ioController->isConnected()) {
+        m_trackController->disconnectWithPLC();
+    }
+
     delete ui;
 }
 
@@ -280,16 +305,16 @@ void MainWindow::initTrackUI()
             ui->btn_trackConnect->setText("Disconnect");
             setLightState(ui->widget_lightContainer, "light_trackConnect", LightGreen);
             // 连接成功后每 500ms 读取一次地轨PLC数据
-            if (m_timer && !m_timer->isActive()) {
-                m_timer->setInterval(500);
-                m_timer->start();
+            if (m_comTimer && !m_comTimer->isActive()) {
+                m_comTimer->setInterval(500);
+                m_comTimer->start();
             }
         } else if (flag == 0) {     // 未连接状态
             ui->btn_trackConnect->setText("Connect");
             setLightState(ui->widget_lightContainer, "light_trackConnect", LightGray);
             setLightState(ui->widget_lightContainer, "light_trackHeart", LightGray);
-            if (m_timer && m_timer->isActive()) {
-                m_timer->stop();
+            if (m_comTimer && m_comTimer->isActive()) {
+                m_comTimer->stop();
             }
         } else {    // 发生故障
             setLightState(ui->widget_lightContainer, "light_trackConnect", LightRed);
@@ -415,15 +440,15 @@ void MainWindow::initRobotUI()
             ui->btn_robotConnect->setText("Disconnect");
             setLightState(ui->widget_lightContainer, "light_robotConnect", LightGreen);
             // 连接成功后每隔 1s 读取一次机器人PLC数据
-            if (m_timer && !m_timer->isActive()) {
-                m_timer->setInterval(1000);
-                m_timer->start();
+            if (m_comTimer && !m_comTimer->isActive()) {
+                m_comTimer->setInterval(1000);
+                m_comTimer->start();
             }
         } else if (flag == 0) {     // 未连接状态
             ui->btn_robotConnect->setText("Connect");
             setLightState(ui->widget_lightContainer, "light_robotConnect", LightGray);
-            if (m_timer && m_timer->isActive()) {
-                m_timer->stop();
+            if (m_comTimer && m_comTimer->isActive()) {
+                m_comTimer->stop();
             }
         }
     });
@@ -479,15 +504,15 @@ void MainWindow::initModuleUI()
             ui->btn_moduleConnect->setText("Disconnect");
             setLightState(ui->widget_lightContainer, "light_moduleState", LightGreen);
             // 连接成功后每隔 500ms 读取一次IO模块数据
-            if (m_timer && !m_timer->isActive()) {
-                m_timer->setInterval(500);
-                m_timer->start();
+            if (m_comTimer && !m_comTimer->isActive()) {
+                m_comTimer->setInterval(500);
+                m_comTimer->start();
             }
         } else if (flag == 0) {     // 未连接状态
             ui->btn_moduleConnect->setText("Connect");
             setLightState(ui->widget_lightContainer, "light_moduleState", LightGray);
-            if (m_timer && m_timer->isActive()) {
-                m_timer->stop();
+            if (m_comTimer && m_comTimer->isActive()) {
+                m_comTimer->stop();
             }
         }
     });
@@ -701,12 +726,12 @@ void MainWindow::initModuleUI()
     });
 }
 
-void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
+void MainWindow::loading(int shelvesId, int boxId, int fixtureId, const std::string& deviceID, const std::string& cellID, const std::string& channelID, const std::string& stepFilename)
 {
     long long count = 0;
     // // 0. 检查指定温控箱是否在工作，内部是否有托盘，门是否为锁紧状态，机械臂是否为原点状态
     ui->textBrowser->clear();
-    ui->textBrowser->append(QString("正在将托盘从 %1 号货架运至 %2 号检测位...").arg(shelvesId).arg(fixtureId));
+    ui->textBrowser->append(QString(u8"正在将托盘从 %1 号货架运至 %2 号检测位...").arg(shelvesId).arg(fixtureId));
 
     m_robotController->clearAllBits();
 
@@ -732,7 +757,7 @@ void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append(QString("检测箱 %1 已开锁").arg(boxId));
+    ui->textBrowser->append(QString(u8"检测箱 %1 已开锁").arg(boxId));
     m_ioController->boxOpen(boxId);
     count = 0;
 
@@ -749,7 +774,7 @@ void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append(QString("检测箱 %1 门已打开").arg(boxId));
+    ui->textBrowser->append(QString(u8"检测箱 %1 门已打开").arg(boxId));
     m_ioController->fixtureSet(fixtureId, 0);
     count = 0;
 
@@ -766,7 +791,7 @@ void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append(QString("治具 %1 已抬起").arg(fixtureId));
+    ui->textBrowser->append(QString(u8"治具 %1 已抬起").arg(fixtureId));
     m_robotController->getFromShelves(shelvesId);
 
     // 5. 等待机械臂返回地轨移动请求，移动地轨至货架点位
@@ -777,7 +802,7 @@ void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append("地轨移动中...");
+    ui->textBrowser->append(u8"地轨移动中...");
     m_trackController->moveToTarget(SHELVES_POSITION);
 
     // 6. 等待地轨移动完成信号，给机械臂下发移动到位信号
@@ -788,8 +813,8 @@ void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append("地轨已移动至货架点位");
-    ui->textBrowser->append(QString("正在从 %1 号货架处夹取托盘...").arg(shelvesId));
+    ui->textBrowser->append(u8"地轨已移动至货架点位");
+    ui->textBrowser->append(QString(u8"正在从 %1 号货架处夹取托盘...").arg(shelvesId));
     m_trackController->setMove(false);
     m_robotController->trackMoveArrived(SHELVES_POSITION);
 
@@ -801,7 +826,7 @@ void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append("托盘夹取完成");
+    ui->textBrowser->append(u8"托盘夹取完成");
     m_robotController->putToFixture(fixtureId);
 
     // 8. 等待机械臂返回地轨移动请求，移动地轨至检测箱点位
@@ -833,7 +858,7 @@ void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
         }
         m_trackController->moveToTarget(BOX_3_POSITION);
     }
-    ui->textBrowser->append("地轨移动中...");
+    ui->textBrowser->append(u8"地轨移动中...");
 
     // 9. 等待地轨移动完成信号，给机械臂下发移动到位信号
     while (!m_trackController->getArrivedSignal()) {
@@ -851,8 +876,8 @@ void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
     } else if (boxId == 3) {
         m_robotController->trackMoveArrived(BOX_3_POSITION);
     }
-    ui->textBrowser->append(QString("地轨已移动至 %1 号工位").arg(boxId));
-    ui->textBrowser->append(QString("正在向 %1 号治具处放置托盘...").arg(fixtureId));
+    ui->textBrowser->append(QString(u8"地轨已移动至 %1 号工位").arg(boxId));
+    ui->textBrowser->append(QString(u8"正在向 %1 号治具处放置托盘...").arg(fixtureId));
 
     // 10. 等待机械臂返回放置完成信号，机械臂信号清零，治具下压
     while (!m_robotController->resultOfPutToFixture(fixtureId)) {
@@ -879,7 +904,7 @@ void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append(QString("治具 %1 已下压").arg(fixtureId));
+    ui->textBrowser->append(QString(u8"治具 %1 已下压").arg(fixtureId));
     m_ioController->boxClose(boxId);
     count = 0;
 
@@ -896,7 +921,7 @@ void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append(QString("检测箱 %1 门已关闭").arg(boxId));
+    ui->textBrowser->append(QString(u8"检测箱 %1 门已关闭").arg(boxId));
     m_ioController->boxLocking(boxId);
     count = 0;
 
@@ -913,9 +938,10 @@ void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append(QString("检测箱 %1 已上锁").arg(boxId));
+    ui->textBrowser->append(QString(u8"检测箱 %1 已上锁").arg(boxId));
     m_trackController->moveToTarget(ORIGIN_POSITION);
-    ui->textBrowser->append("地轨回原点中...");
+    ui->textBrowser->append(u8"地轨回原点中...");
+    count = 0;
 
     // 15. 等待地轨回原点完成，开始检测
     while (!m_trackController->getArrivedSignal()) {
@@ -926,7 +952,23 @@ void MainWindow::loading(int shelvesId, int boxId, int fixtureId)
         }
     }
     m_trackController->setMove(false);
-    ui->textBrowser->append("放置完成！开始检测...");
+    ui->textBrowser->append(u8"放置完成！");
+
+    while (true) {
+        count++;
+        if (count >= 1000) {
+            count = 0;
+            break;
+        }
+    }
+
+    int ret = startDetection(deviceID, cellID, channelID, stepFilename);
+    if (ret == -1) {
+        std::cout << "启动检测失败" << std::endl;
+    } else if (ret == 1) {
+        std::cout << "启动检测成功" << std::endl;
+    }
+    ui->textBrowser->append(u8"开始检测...");
 }
 
 void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
@@ -936,7 +978,7 @@ void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
     long long count = 0;
 
     ui->textBrowser->clear();
-    ui->textBrowser->append(QString("正在将托盘从 %1 号治具运至 %2 号置物架...").arg(fixtureId).arg(shelvesId));
+    ui->textBrowser->append(QString(u8"正在将托盘从 %1 号治具运至 %2 号置物架...").arg(fixtureId).arg(shelvesId));
 
     m_robotController->clearAllBits();
 
@@ -957,7 +999,7 @@ void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append(QString("治具 %1 已抬起").arg(fixtureId));
+    ui->textBrowser->append(QString(u8"治具 %1 已抬起").arg(fixtureId));
     m_ioController->boxUnlocking(boxId);
     count = 0;
 
@@ -974,7 +1016,7 @@ void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append(QString("检测箱 %1 已解锁").arg(boxId));
+    ui->textBrowser->append(QString(u8"检测箱 %1 已解锁").arg(boxId));
     m_ioController->boxOpen(boxId);
     count = 0;
 
@@ -991,7 +1033,7 @@ void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append(QString("检测箱 %1 门已打开").arg(boxId));
+    ui->textBrowser->append(QString(u8"检测箱 %1 门已打开").arg(boxId));
     m_robotController->getFromFixture(fixtureId);
 
     // 5. 等待机械臂返回地轨移动请求，移动地轨至检测箱工位
@@ -1023,7 +1065,7 @@ void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
         }
         m_trackController->moveToTarget(BOX_3_POSITION);
     }
-    ui->textBrowser->append("地轨移动中...");
+    ui->textBrowser->append(u8"地轨移动中...");
 
     // 6. 等待地轨移动完成信号，给机械臂下发移动到位信号
     while (!m_trackController->getArrivedSignal()) {
@@ -1041,8 +1083,8 @@ void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
     } else if (boxId == 3) {
         m_robotController->trackMoveArrived(BOX_3_POSITION);
     }
-    ui->textBrowser->append(QString("地轨已移动至 %1 号工位").arg(boxId));
-    ui->textBrowser->append(QString("正在从 %1 号治具处叉取托盘...").arg(fixtureId));
+    ui->textBrowser->append(QString(u8"地轨已移动至 %1 号工位").arg(boxId));
+    ui->textBrowser->append(QString(u8"正在从 %1 号治具处叉取托盘...").arg(fixtureId));
 
     // 7. 等待机械臂返回叉取完成信号，给机械臂下发放置命令
     while (!m_robotController->resultOfGetFromFixture(fixtureId)) {
@@ -1052,7 +1094,7 @@ void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append("托盘夹取完成");
+    ui->textBrowser->append(u8"托盘夹取完成");
     m_robotController->putToShelves(shelvesId);
 
     // 8. 等待机械臂返回地轨移动请求，移动地轨至货架位
@@ -1063,7 +1105,7 @@ void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append("地轨移动中...");
+    ui->textBrowser->append(u8"地轨移动中...");
     m_trackController->moveToTarget(SHELVES_POSITION);
 
     // 9. 等待地轨移动完成信号，给机械臂下发移动到位信号
@@ -1076,8 +1118,8 @@ void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
     }
     m_trackController->setMove(false);
     m_robotController->trackMoveArrived(SHELVES_POSITION);
-    ui->textBrowser->append("地轨已移动至货架点位");
-    ui->textBrowser->append(QString("正在向 %1 号货架处放置托盘...").arg(shelvesId));
+    ui->textBrowser->append(u8"地轨已移动至货架点位");
+    ui->textBrowser->append(QString(u8"正在向 %1 号货架处放置托盘...").arg(shelvesId));
 
     // 10. 等待机械臂返回放置完成信号，机械臂信号清零，温控箱关门
     while (!m_robotController->resultOfPutToShelves(shelvesId)) {
@@ -1104,7 +1146,7 @@ void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append(QString("检测箱 %1 门已关闭").arg(boxId));
+    ui->textBrowser->append(QString(u8"检测箱 %1 门已关闭").arg(boxId));
     m_ioController->boxLocking(boxId);
     count = 0;
 
@@ -1121,9 +1163,9 @@ void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
             return;
         }
     }
-    ui->textBrowser->append(QString("检测箱 %1 已上锁").arg(boxId));
+    ui->textBrowser->append(QString(u8"检测箱 %1 已上锁").arg(boxId));
     m_trackController->moveToTarget(ORIGIN_POSITION);
-    ui->textBrowser->append("地轨回原点中...");
+    ui->textBrowser->append(u8"地轨回原点中...");
 
     // 13. 等待地轨回原点完成，结束
     while (!m_trackController->getArrivedSignal()) {
@@ -1134,5 +1176,186 @@ void MainWindow::unloading(int shelvesId, int boxId, int fixtureId)
         }
     }
     m_trackController->setMove(false);
-    ui->textBrowser->append("放置完成！");
+    ui->textBrowser->append(u8"放置完成！");
 }
+
+int MainWindow::startDetection(std::string devid, std::string subdevid, std::string chlid, std::string filename) {
+    int ret = -1;
+
+    //定义长度变量
+    int send_len = 0;
+    int recv_len = 0;
+    //获取当前时间
+    SYSTEMTIME systm;
+    GetLocalTime(&systm);
+    std::string code = std::to_string(systm.wYear) + std::to_string(systm.wMonth) + std::to_string(systm.wDay) + std::to_string(systm.wHour) + std::to_string(systm.wMinute) + std::to_string(systm.wSecond) + std::to_string(rand() % (1 + 100));
+
+    //定义发送缓冲区和接受缓冲区
+    std::string send_buf = "<?xml version=\"1.0\" encoding=\"UTF-8\" ?> \n"
+                      "<bts version=\"1.0\"> \n"
+                      " <cmd>start</cmd> \n"
+                      " <list count = \"1\"> \n"
+                      "  <start ip=\"127.0.0.1\" devtype=\"27\" devid=\"" + devid + "\" subdevid=\"" + subdevid + "\" chlid=\"" + chlid + "\" barcode=\"" + code + "\">D:\\Program Files\\NEWARE\\BTSClient80\\StepManager\\Template\\" + filename + "</start> \n"
+                                                                                                                                                         " </list> \n"
+                                                                                                                                                         "</bts>\n\n#\r\n";
+    char recv_buf[10240];
+    //定义服务端套接字，接受请求套接字
+    SOCKET s_server;
+    //服务端地址客户端地址
+    SOCKADDR_IN server_addr;
+    initialization();
+    //填充服务端信息
+    server_addr.sin_family = AF_INET;
+    //ip地址和端口号
+    server_addr.sin_addr.S_un.S_addr = inet_addr("192.168.1.250");
+    server_addr.sin_port = htons(502);
+    //创建套接字
+    s_server = socket(AF_INET, SOCK_STREAM, 0);
+    if (::connect(s_server, (SOCKADDR*)&server_addr, sizeof(SOCKADDR)) == SOCKET_ERROR) {
+        std::cout << "服务器连接失败！" << std::endl;
+        WSACleanup();
+    }
+
+    //发送,接收数据
+    send_len = send(s_server, send_buf.c_str(), 10240, 0);
+    if (send_len < 0) {
+        std::cout << "发送失败！" << std::endl;
+    }
+    recv_len = recv(s_server, recv_buf, 10240, 0);
+    if (recv_len < 0) {
+        std::cout << "接受失败！" << std::endl;
+    }
+    else {
+        std::cout << "服务端信息:" << recv_buf << std::endl;
+        // 接收消息处理
+        // 解析xml数据
+        // 定义一个TiXmlDocument类指针
+        std::string recv_str = recv_buf;
+        std::replace(recv_str.begin(), recv_str.end(), '#', ' ');
+        TiXmlDocument* tinyXmlDoc = new TiXmlDocument();
+        tinyXmlDoc->Parse(recv_str.c_str());
+        TiXmlElement* bts = new TiXmlElement("bts");
+        bts = tinyXmlDoc->FirstChildElement();
+        TiXmlElement* cmd = new TiXmlElement("cmd");
+        cmd = bts->FirstChildElement();
+        TiXmlElement* list = new TiXmlElement("list");
+        list = cmd->NextSiblingElement();
+        for (TiXmlElement* elem = list->FirstChildElement(); elem != nullptr; elem = elem->NextSiblingElement()) {
+            if (std::string(elem->GetText()) == "ok") {
+                std::cout << "设备号：" << elem->Attribute("devid") << " 单元号：" << elem->Attribute("subdevid") << " 通道号：" << elem->Attribute("chlid") << " 启动成功" << std::endl;
+                ret = 1;
+            }
+            else {
+                std::cout << "设备号：" << elem->Attribute("devid") << " 单元号：" << elem->Attribute("subdevid") << " 通道号：" << elem->Attribute("chlid") << " 启动失败" << std::endl;
+            }
+        }
+    }
+
+    //关闭套接字
+    closesocket(s_server);
+    //释放DLL资源
+    WSACleanup();
+
+    return ret;
+}
+
+int MainWindow::getDetectionStatus()
+{
+    int ret = -1;
+    //定义长度变量
+    int send_len = 0;
+    int recv_len = 0;
+    //定义发送缓冲区和接受缓冲区
+    std::string send_buf = "<?xml version=\"1.0\" encoding=\"UTF-8\" ?> \n"
+                      "<bts version=\"1.0\"> \n"
+                      " <cmd>getchlstatus</cmd> \n"
+                      " <list count = \"1\"> \n"
+                      "  <status ip=\"127.0.0.1\" devtype=\"27\" devid=\"49\" subdevid=\"1\" chlid=\"1\">true</status> \n"
+                      "  <status ip=\"127.0.0.1\" devtype=\"27\" devid=\"49\" subdevid=\"1\" chlid=\"2\">true</status> \n"
+                      "  <status ip=\"127.0.0.1\" devtype=\"27\" devid=\"49\" subdevid=\"1\" chlid=\"3\">true</status> \n"
+                      "  <status ip=\"127.0.0.1\" devtype=\"27\" devid=\"49\" subdevid=\"1\" chlid=\"4\">true</status> \n"
+                      "  <status ip=\"127.0.0.1\" devtype=\"27\" devid=\"49\" subdevid=\"1\" chlid=\"5\">true</status> \n"
+                      " </list> \n"
+                      "</bts>\n\n#\r\n";
+    char recv_buf[10240];
+    //定义服务端套接字，接受请求套接字
+    SOCKET s_server;
+    //服务端地址客户端地址
+    SOCKADDR_IN server_addr;
+    initialization();
+    //填充服务端信息
+    server_addr.sin_family = AF_INET;
+    //固定ip地址和端口号
+    server_addr.sin_addr.S_un.S_addr = inet_addr("192.168.1.250"); //运行ip
+    server_addr.sin_port = htons(502);
+    //创建套接字
+    s_server = socket(AF_INET, SOCK_STREAM, 0);
+    if (::connect(s_server, (SOCKADDR*)&server_addr, sizeof(SOCKADDR)) == SOCKET_ERROR) {
+        std::cout << "服务器连接失败！" << std::endl;
+        WSACleanup();
+    }
+
+    //发送,接收数据
+    send_len = send(s_server, send_buf.c_str(), 10240, 0);
+    if (send_len < 0) {
+        std::cout << "发送失败！" << std::endl;
+    }
+    recv_len = recv(s_server, recv_buf, 10240, 0);
+    if (recv_len < 0) {
+        std::cout << "接受失败！" << std::endl;
+    }
+    //关闭套接字
+    closesocket(s_server);
+    //释放DLL资源
+    WSACleanup();
+
+    // 接收消息处理
+    // 解析xml数据
+    if (recv_len > 0) {
+        // 定义一个TiXmlDocument类指针
+        std::string recv_str = recv_buf;
+        replace(recv_str.begin(), recv_str.end(), '#', ' ');
+        TiXmlDocument* tinyXmlDoc = new TiXmlDocument();
+        tinyXmlDoc->Parse(recv_str.c_str());
+        TiXmlElement* bts = new TiXmlElement("bts");
+        bts = tinyXmlDoc->FirstChildElement();
+        TiXmlElement* cmd = new TiXmlElement("cmd");
+        cmd = bts->FirstChildElement();
+        TiXmlElement* list = new TiXmlElement("list");
+        list = cmd->NextSiblingElement();
+        std::vector<std::string> status;
+        for (TiXmlElement* elem = list->FirstChildElement(); elem != nullptr; elem = elem->NextSiblingElement()) {
+            status.push_back(std::string(elem->GetText()));
+        }
+
+        if (count(status.begin(), status.end(), "finish") == status.size()) {
+            //执行把电池取出操作
+            std::cout << "取出电池..." << std::endl;
+            ret = 1;
+        }
+
+        for (const auto& item : status) {
+            std::cout << item << std::endl;
+        }
+        std::cout << std::endl;
+    }
+
+    return ret;
+}
+
+void MainWindow::initialization() {
+    // 初始化套接字库
+    WORD w_req = MAKEWORD(2, 2); // 版本号
+    WSADATA wsadata;
+    int err;
+    err = WSAStartup(w_req, &wsadata);
+    if (err != 0) {
+        std::cout << "初始化套接字库失败" << std::endl;
+    }
+    if (LOBYTE(wsadata.wVersion) != 2 || HIBYTE(wsadata.wHighVersion) != 2) {
+        std::cout << "套接字库版本不符" << std::endl;
+        WSACleanup();
+    }
+    // 填充服务端地址信息
+}
+

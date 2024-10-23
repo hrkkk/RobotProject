@@ -6,7 +6,7 @@ IOController::IOController() : m_isConnected(false), m_lastIP("192.168.1.7"), m_
     connect(_modbus, &MyModbus::signal_stateChanged, this, &IOController::slot_stateChanged);
     connect(_modbus, &MyModbus::signal_receivedData, this, &IOController::slot_receivedData);
     connect(_modbus, &MyModbus::signal_errorOccurred, this, [=]() {
-        reconnectToPLC();
+        // reconnectToPLC();
         emit sig_errorOccurred();
     });
 }
@@ -302,6 +302,9 @@ int IOController::readBit(int port)
     return _data[port];
 }
 
+/*
+ * 读取 IO 模块的输入输出状态
+ */
 void IOController::requestFeedback(int flag)
 {
     if (flag == 1) {

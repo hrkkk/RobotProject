@@ -42,11 +42,15 @@ else()
             RobotController.h RobotController.cpp
             ModbusCom.h ModbusCom.cpp
             IOController.h IOController.cpp
-            WorkProcess.h WorkProcess.cpp
             GlobalVariable.cpp
             GlobalVariable.h
-            Container.cpp Container.h
             res.qrc
+            tinyxml_2_6_2/tinyxml/tinystr.h
+            tinyxml_2_6_2/tinyxml/tinyxml.h
+            tinyxml_2_6_2/tinyxml/tinystr.cpp
+            tinyxml_2_6_2/tinyxml/tinyxml.cpp
+            tinyxml_2_6_2/tinyxml/tinyxmlerror.cpp
+            tinyxml_2_6_2/tinyxml/tinyxmlparser.cpp
         )
     endif()
 endif()

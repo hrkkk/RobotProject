@@ -7,5 +7,6 @@
         <file>resources/track.png</file>
         <file>resources/add.png</file>
         <file>resources/pallet.png</file>
+        <file>resources/model.png</file>
     </qresource>
 </RCC>
