@@ -51,6 +51,9 @@ public:
     // 获取治具气缸状态    1: 下压    0:上抬
     FIXTURE_STATE getFixtureState(int index);
 
+    // 报警灯
+    void setWarningLight(bool flag);
+
     void requestFeedback(int flag);
 
     bool isConnected();

@@ -78,6 +78,8 @@ extern int DOOR_LOCK_3_OUT;
 extern int DOOR_LOCK_3_IN1;
 extern int DOOR_LOCK_3_IN2;
 
+extern int WARNING_LIGHT_OUT;
+
 // 机器人信号
 extern int ROBOT_READ_BASE_ADDRESS;
 extern int ROBOT_WRITE_BASE_ADDRESS;
@@ -137,5 +139,10 @@ extern int WKXF4;
 extern int WKXF5;
 extern int WKXF6;
 
-
+extern int EXTERN_PAUSE;
+extern int EXTERN_RUN;
+extern int EXTERN_STOP;
+extern int EXTERN_MAIN;
+extern int EXTERN_RESET;
+extern int EXTERN_UPLOAD;
 #endif // GLOBALVARIABLE_H

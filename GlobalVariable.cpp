@@ -80,6 +80,9 @@ int DOOR_LOCK_1_OUT = 11;   // O12
 int DOOR_LOCK_1_IN1 = 22;   // I23
 int DOOR_LOCK_1_IN2 = 23;   // I24
 
+// 报警灯IO信号
+int WARNING_LIGHT_OUT = 13;     // O14
+
 // 机器人信号
 int ROBOT_READ_BASE_ADDRESS = 257;
 int ROBOT_WRITE_BASE_ADDRESS = 1;
@@ -138,3 +141,10 @@ int WKXF3 = 49;
 int WKXF4 = 50;
 int WKXF5 = 51;
 int WKXF6 = 52;
+
+int EXTERN_PAUSE = 55; // 88
+int EXTERN_RUN = 56;   // 89
+int EXTERN_UPLOAD = 57;  // 90
+int EXTERN_MAIN = 58;  // 91
+int EXTERN_RESET = 59; // 92
+int EXTERN_STOP = 60; // 93

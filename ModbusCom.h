@@ -5,6 +5,9 @@
 #include <QtSerialBus/QModbusTcpClient>
 #include <QtSerialBus/QModbusDataUnit>
 #include <QDebug>
+#include <QEventLoop>
+
+#include <string>
 
 #define LOGDEBUG qDebug()<<__FILE__<<__LINE__
 
@@ -12,7 +15,7 @@ class MyModbus : public QObject
 {
     Q_OBJECT
 public:
-    explicit MyModbus(QObject *parent = nullptr);
+    explicit MyModbus(const std::string& deviceName, QObject *parent = nullptr);
     ~MyModbus();
 
     void connectToModbus(QString ip,int port);
@@ -24,6 +27,12 @@ public:
     bool writeSingleHoldingRegister(quint16 startAddress, quint16 value);
     bool writeMultiHoldingRegisters(quint16 startAddress, const QList<quint16>& values);
     bool getConnectionState();
+
+    // 同步写一个或多个寄存器
+    bool syncWriteRegister(quint16 startAddress, const QVector<quint16>& values);
+    // 同步读多个寄存器
+    bool syncReadHoldingReister(quint16 startAddress, quint16 quantity, QVector<quint16>& result);
+    bool syncReadInputReister(quint16 startAddress, quint16 quantity, QVector<quint16>& result);
 
 signals:
     void signal_stateChanged(bool flag);
@@ -39,5 +48,6 @@ private slots:
 
 private:
     QModbusTcpClient* m_modbusClient;
+    std::string m_deviceName;
 };
 #endif // MYMODBUS_H

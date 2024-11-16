@@ -6,6 +6,7 @@
         <file>resources/state.png</file>
         <file>resources/track.png</file>
         <file>resources/add.png</file>
-        <file>resources/pallet.png</file>
+        <file>resources/model.png</file>
+        <file>resources/profile.png</file>
     </qresource>
 </RCC>

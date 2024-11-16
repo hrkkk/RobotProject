@@ -5,7 +5,7 @@
 
 TrackController::TrackController() : m_isConnected(false)
 {
-    _modbus = new MyModbus();
+    _modbus = new MyModbus("Track");
     connect(_modbus, &MyModbus::signal_stateChanged, this, &TrackController::slot_stateChanged);
     connect(_modbus, &MyModbus::signal_receivedData, this, &TrackController::slot_receivedData);
 }

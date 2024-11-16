@@ -4,7 +4,7 @@
 
 RobotController::RobotController() : m_isConnected(false)
 {
-    _modbus = new MyModbus();
+    _modbus = new MyModbus("Robot");
     connect(_modbus, &MyModbus::signal_stateChanged, this, &RobotController::slot_stateChanged);
     connect(_modbus, &MyModbus::signal_receivedData, this, &RobotController::slot_receivedData);
 }
@@ -121,35 +121,57 @@ void RobotController::trackMoveArrived(int pos)
 
 void RobotController::executeAction(int bit)
 {
-    // uint64_t sendData = 1ULL << bit;
-
-    // // 分两次写，因为一次只能写32位
-    // _modbus->writeModbusData(2, ROBOT_WRITE_BASE_ADDRESS, sendData >> 32);
-    // _modbus->writeModbusData(2, ROBOT_WRITE_BASE_ADDRESS + 1, sendData);
-    // // _modbus->writeModbusData(2, ROBOT_WRITE_BASE_ADDRESS + 2, sendData >> 16);
-
-    QList<quint16> values;
+    QList<quint16> values;      // 16 * 4
 
     if (bit >= 0 && bit < 16) {
         values.append(1 << bit);
         values.append(0);
         values.append(0);
-        values.append(0);
+        values.append(0 | (1 << (EXTERN_PAUSE - 48)));
     } else if (bit >= 16 && bit < 32) {
         values.append(0);
         values.append(1 << (bit - 16));
         values.append(0);
-        values.append(0);
+        values.append(0 | (1 << (EXTERN_PAUSE - 48)));
     } else if (bit >= 32 && bit < 48) {
         values.append(0);
         values.append(0);
         values.append(1 << (bit - 32));
-        values.append(0);
+        values.append(0 | (1 << (EXTERN_PAUSE - 48)));
     } else if (bit >= 48 && bit < 64) {
         values.append(0);
         values.append(0);
         values.append(0);
-        values.append(1 << (bit - 48));
+        values.append((1 << (bit - 48)) | (1 << (EXTERN_PAUSE - 48)));
+    }
+
+    _modbus->writeMultiHoldingRegisters(ROBOT_WRITE_BASE_ADDRESS, values);
+}
+
+void RobotController::executeAction(int bit1, int bit2)
+{
+    QList<quint16> values;      // 16 * 4
+
+    if (bit1 >= 0 && bit1 < 16) {
+        values.append((1 << bit1) | (1 << bit2));
+        values.append(0);
+        values.append(0);
+        values.append(0);
+    } else if (bit1 >= 16 && bit1 < 32) {
+        values.append(0);
+        values.append((1 << (bit1 - 16)) | (1 << (bit2 - 16)));
+        values.append(0);
+        values.append(0);
+    } else if (bit1 >= 32 && bit1 < 48) {
+        values.append(0);
+        values.append(0);
+        values.append((1 << (bit1 - 32)) | (1 << (bit2 - 32)));
+        values.append(0);
+    } else if (bit1 >= 48 && bit1 < 64) {
+        values.append(0);
+        values.append(0);
+        values.append(0);
+        values.append((1 << (bit1 - 48)) | (1 << (bit2 - 48)));
     }
 
     _modbus->writeMultiHoldingRegisters(ROBOT_WRITE_BASE_ADDRESS, values);
@@ -216,4 +238,37 @@ void RobotController::clearAllBits()
     values.append(0);
 
     _modbus->writeMultiHoldingRegisters(ROBOT_WRITE_BASE_ADDRESS, values);
+}
+
+void RobotController::pauseRobot()
+{
+    clearAllBits();
+}
+
+void RobotController::runRobot()
+{
+    executeAction(EXTERN_PAUSE, EXTERN_RUN);
+}
+
+void RobotController::stopRobot()
+{
+    executeAction(EXTERN_STOP);
+}
+
+// 主程序调用
+void RobotController::runProcess()
+{
+    executeAction(EXTERN_MAIN);
+}
+
+// 外部伺服上电
+void RobotController::applyElec()
+{
+    executeAction(EXTERN_UPLOAD);
+}
+
+// 报警复位
+void RobotController::resetWarning()
+{
+    executeAction(EXTERN_RESET);
 }

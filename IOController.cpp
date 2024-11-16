@@ -2,11 +2,16 @@
 
 IOController::IOController() : m_isConnected(false), m_lastIP("192.168.1.7"), m_lastPort(8234)
 {
-    _modbus = new MyModbus();
+    _modbus = new MyModbus("IO Module");
     connect(_modbus, &MyModbus::signal_stateChanged, this, &IOController::slot_stateChanged);
     connect(_modbus, &MyModbus::signal_receivedData, this, &IOController::slot_receivedData);
     connect(_modbus, &MyModbus::signal_errorOccurred, this, [=]() {
-        reconnectToPLC();
+        // reconnectToPLC();
+        // disconnectWithPLC();
+
+        qDebug() << "error error " << isConnected();
+
+        // 发送信号给UI
         emit sig_errorOccurred();
     });
 }
@@ -26,7 +31,7 @@ void IOController::disconnectWithPLC()
 void IOController::reconnectToPLC()
 {
     // 断开连接
-    if (_modbus->getConnectionState()) {
+    if (isConnected()) {
         _modbus->disconnect();
     }
     // 等待断开
@@ -241,6 +246,15 @@ FIXTURE_STATE IOController::getFixtureState(int index)
     }
 }
 
+void IOController::setWarningLight(bool flag)
+{
+    if (flag) {
+        writeBit(WARNING_LIGHT_OUT, 1);
+    } else {
+        writeBit(WARNING_LIGHT_OUT, 0);
+    }
+}
+
 void IOController::slot_stateChanged(bool flag)
 {
     m_isConnected = flag;
@@ -254,10 +268,10 @@ bool IOController::isConnected()
 
 void IOController::slot_receivedData(const QVector<quint16>& data)
 {
-    if (data.size() == IO_READ_NUMS) {
-        _data = data;
-    }
-    emit sig_updateData(data);
+    // if (data.size() == IO_READ_NUMS) {
+    //     _data = data;
+    // }
+    // emit sig_updateData(data);
 }
 
 void IOController::resetAll()
@@ -282,7 +296,9 @@ void IOController::resetAll()
     for (int i = 0; i < 12; ++i) {
         values.append(0);
     }
-    _modbus->writeMultiHoldingRegisters(0, values);
+    if (isConnected()) {
+        _modbus->writeMultiHoldingRegisters(0, values);
+    }
 }
 
 // 写单个保持寄存器  指令：06
@@ -291,8 +307,19 @@ void IOController::resetAll()
 // 寄存器值： 0  1
 void IOController::writeBit(int port, int value)
 {
-    if (!_modbus->writeSingleHoldingRegister(port, value)) {
-        qDebug() << "数据发送失败";
+    // if (!isConnected()) {
+    //     return;
+    // }
+    // if (!_modbus->writeSingleHoldingRegister(port, value)) {
+    //     qDebug() << "数据发送失败";
+    // }
+
+    if (!isConnected()) {
+        return;
+    }
+    QVector<quint16> request(1, value);
+    if (!_modbus->syncWriteRegister(port, request)) {
+        qDebug() << QStringLiteral("数据发送失败");
     }
 }
 
@@ -300,27 +327,58 @@ int IOController::readBit(int port)
 {
     // 直接解析_data中的数据即可
     return _data[port];
+
+    // QVector<quint16> result;
+    // if (_modbus->syncReadInputReister(IO_BASE_ADDRESS, IO_READ_NUMS, result)) {
+    //     if (result.size() == IO_READ_NUMS) {
+    //         return result[port];
+    //     }
+    // }
+    // return -1;
 }
 
+/*
+ * 读取 IO 模块的输入输出状态
+ */
 void IOController::requestFeedback(int flag)
 {
+    if (!isConnected()) {
+        return;
+    }
+    // if (flag == 1) {
+    //     // 读取输入寄存器 指令：04H
+    //     // 从机地址：1
+    //     // 寄存器起始地址：0
+    //     // 寄存器个数：24
+    //     // 返回载荷字节数： 48（每个寄存器16位）
+    //     if (!_modbus->readModbusData(4, IO_BASE_ADDRESS, IO_READ_NUMS)) {
+    //         qDebug() << "数据读取失败";
+    //     }
+    // } else {
+    //     // 读取保持寄存器  指令：03H
+    //     // 从机地址：1
+    //     // 寄存器起始地址：0
+    //     // 寄存器个数：12
+    //     // 返回载荷字节数： 24（每个寄存器16位）
+    //     if (!_modbus->readModbusData(3, IO_BASE_ADDRESS, IO_WRITE_NUMS)) {
+    //         qDebug() << "数据读取失败";
+    //     }
+    // }
+
     if (flag == 1) {
-        // 读取输入寄存器 指令：04H
-        // 从机地址：1
-        // 寄存器起始地址：0
-        // 寄存器个数：24
-        // 返回载荷字节数： 48（每个寄存器16位）
-        if(!_modbus->readModbusData(4, IO_BASE_ADDRESS, IO_READ_NUMS)) {
-            qDebug() << "数据读取失败";
+        QVector<quint16> result;
+        if (_modbus->syncReadInputReister(IO_BASE_ADDRESS, IO_READ_NUMS, result)) {
+            if (result.size() == IO_READ_NUMS) {
+                _data = result;
+                emit sig_updateData(result);
+            }
         }
     } else {
-        // 读取保持寄存器  指令：03H
-        // 从机地址：1
-        // 寄存器起始地址：0
-        // 寄存器个数：12
-        // 返回载荷字节数： 24（每个寄存器16位）
-        if (!_modbus->readModbusData(3, IO_BASE_ADDRESS, IO_WRITE_NUMS)) {
-            qDebug() << "数据读取失败";
+        QVector<quint16> result;
+        if (_modbus->syncReadHoldingReister(IO_BASE_ADDRESS, IO_WRITE_NUMS, result)) {
+            if (result.size() == IO_WRITE_NUMS) {
+                emit sig_updateData(result);
+            }
         }
     }
 }

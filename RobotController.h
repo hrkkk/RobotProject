@@ -28,12 +28,25 @@ public:
     void putToShelves(int index);
     bool resultOfPutToShelves(int index);
 
+    // 外部暂停
+    void pauseRobot();
+    void runRobot();
+    void stopRobot();
+
+    // 主程序调用
+    void runProcess();
+    // 外部伺服上电
+    void applyElec();
+    // 报警复位
+    void resetWarning();
+
     bool requireTrackMove(int pos);
     void trackMoveArrived(int pos);
     void clearAllBits();
 
     void requestFeedback();
     void executeAction(int bit);
+    void executeAction(int bit1, int bit2);
 
     bool isConnected();
 
